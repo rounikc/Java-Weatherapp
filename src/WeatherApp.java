@@ -5,6 +5,8 @@ import org.json.simple.parser.JSONParser;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Scanner;
 
 /*ret weather data from API
@@ -17,6 +19,82 @@ public class WeatherApp {
     public static JSONObject getWeatherData(String locationName) {
         //get location coords using geolocation API
         JSONArray locationData = getLocationData(locationName);
+
+        //extract lat and long data
+        JSONObject location = (JSONObject) locationData.get(0);
+        double latitude =  (double) location.get("latitude");
+        double longitude =  (double) location.get("longitude");
+
+        //build API req URL with location coords
+        String urlString = "https://api.open-meteo.com/v1/forecast?" +
+                "latitude=" + latitude + "&longitude=" + longitude +
+                "&hourly=temperature_2m,relative_humidity_2m,precipitation,weather_code,windspeed_10m&timezone=Asia%2FBangkok";
+
+        try{
+            //call api to get response
+            HttpURLConnection conn = fetchApiResponse(urlString);
+
+            //check respons status
+            //200 - connection success
+            if (conn.getResponseCode() != 200) {
+                System.out.println("Error! Could not connect to API");
+                return null;
+            }
+
+            //store json data
+            StringBuilder resultJson = new StringBuilder();
+            Scanner sc = new Scanner(conn.getInputStream());
+            while(sc.hasNext()) {
+                //read and store into the string builder
+                resultJson.append(sc.nextLine());
+            }
+
+            //close scanner
+            sc.close();
+
+            //url close
+            conn.disconnect();
+
+            //parse through data
+            JSONParser parser = new JSONParser();
+            JSONObject resultJsonObj = (JSONObject) parser.parse(String.valueOf(resultJson));
+
+            //retrieve hourly data
+            JSONObject hourly = (JSONObject) resultJsonObj.get("hourly");
+
+            //need the current hour's data, need the index of our current hour
+            JSONArray time = (JSONArray) hourly.get("time");
+            int index = findIndexOfCurrentTime(time);
+
+            //get temperature
+            JSONArray temperatureData = (JSONArray) hourly.get("temperature_2m");
+            double temperature = (double) temperatureData.get(index);
+
+            //get weather code
+            JSONArray weather_code = (JSONArray) hourly.get("weather_code");
+            String weatherCondition = convertweather_code((long) weather_code.get(index));
+
+            //get humidity
+            JSONArray relativeHumidity = (JSONArray) hourly.get("relative_humidity_2m");
+            long humidity = (long) relativeHumidity.get(index);
+
+            //get windspeed
+            JSONArray windspeedData = (JSONArray) hourly.get("windspeed_10m");
+            double windspeed = (double) windspeedData.get(index);
+
+            //build weather json data obj access in frontend
+            JSONObject weatherData = new JSONObject();
+            weatherData.put("temperature", temperature);
+            weatherData.put("weather_condition", weatherCondition);
+            weatherData.put("humidity", humidity);
+            weatherData.put("windspeed_10m", windspeed);
+
+            return weatherData;
+
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+
         return null;
     }
 
@@ -87,5 +165,51 @@ public class WeatherApp {
 
         //cant make connection
         return null;
+    }
+
+    private static int findIndexOfCurrentTime(JSONArray timeList) {
+        String currentTime = getCurrentTime();
+
+        //iterate through the time list and see which one matches current
+        for(int i = 0; i < timeList.size(); i++) {
+            String time = (String) timeList.get(i);
+
+            if(time.equalsIgnoreCase(currentTime)) {
+                //return index
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    public static String getCurrentTime() {
+        //get current date and time
+        LocalDateTime currentDateTime = LocalDateTime.now();
+
+        //format to: 2024-08-18T00:00 (API reads like this)
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH':00'");
+
+        //format and print current date and time
+        String formattedDateandTime = currentDateTime.format(formatter);
+
+        return formattedDateandTime;
+    }
+
+    private static String convertweather_code(long weather_code) {
+        String weatherCondition = "";
+        if(weather_code == 0L) {
+            weatherCondition = "Clear";
+        }else if(weather_code > 0L && weather_code <= 3L) {
+            weatherCondition = "Cloudy";
+        }else if((weather_code >= 51L && weather_code <= 67L)
+                ||
+                (weather_code >= 80L && weather_code <= 99L)) {
+            weatherCondition = "Rain";
+        }else if(weather_code >= 71L && weather_code <= 77L) {
+            weatherCondition = "Snow";
+        }
+
+        return weatherCondition;
     }
 }
